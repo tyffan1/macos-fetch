@@ -185,12 +185,31 @@ main() {
     local disk_path=/System/Volumes/Data
     [[ -d $disk_path ]] || disk_path=/
     local -a df_out
-    read -ra df_out <<< "$(df -Pk $disk_path 2>/dev/null | awk 'NR==2 {print $2, $3}')"
+    local df_raw
+    df_raw=$(df -Pk $disk_path 2>/dev/null | awk 'NR==2 {print $2, $3}')
+    if [[ -n $ZSH_VERSION ]]; then
+        df_out=(${(z)df_raw})
+    else
+        read -ra df_out <<< "$df_raw"
+    fi
     local disk=""
     if (( ${#df_out} == 2 )); then
         local -i d_total=$(( ${df_out[1]} * 1024 )) d_used=$(( ${df_out[2]} * 1024 ))
         (( d_total )) && disk="$(hbytes $d_used) / $(hbytes $d_total) ($(( d_used * 100 / d_total ))%)"
     fi
+
+    #battery
+    local battery=$(pmset -g batt | grep -Eo '[0-9]+%')
+
+    #network status
+    local net_status="offline"
+    curl -s --max-time 2 https://www.google.com > /dev/null && net_status="online"
+
+    #ip
+    local ip=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null)
+
+    #packages
+    local packages=$(brew list --formula 2>/dev/null | wc -l | tr -d '[:space:]')
 
     # ------------------------------------------------------------- info block
     local -a fields=(
@@ -206,6 +225,10 @@ main() {
         "GPU|$gpu"
         "Memory|$mem"
         "Disk|$disk"
+        "Battery|$battery"
+        "Network|$net_status"
+        "IP|$ip"
+        "Packages|$packages"
     )
 
     local -a out=() txt=()
