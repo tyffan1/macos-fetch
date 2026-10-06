@@ -205,6 +205,11 @@ main() {
     local net_status="offline"
     curl -s --max-time 2 https://www.google.com > /dev/null && net_status="online"
 
+    #network speed
+    local raw=$(curl -s -o /dev/null -w "%{size_download} %{time_total} %{speed_download}\n" --max-time 15 http://cachefly.cachefly.net/10mb.test)
+    local bytes=$(echo "$raw" | awk '{print $3}')
+    local net_speed=$(awk  "BEGIN {printf \"%.1f Mbps\", $bytes*8/1000000 }")
+
     #ip
     local ip=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null)
 
@@ -219,7 +224,6 @@ main() {
         "Uptime|$uptime"
         "Shell|$shell"
         "Resolution|$res"
-        "DE|Aqua"
         "Terminal|$term"
         "CPU|$cpu"
         "GPU|$gpu"
@@ -227,6 +231,7 @@ main() {
         "Disk|$disk"
         "Battery|$battery"
         "Network|$net_status"
+        "Network Speed|$net_speed"
         "IP|$ip"
         "Packages|$packages"
     )
