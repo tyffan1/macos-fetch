@@ -236,6 +236,18 @@ main() {
         "Packages|$packages"
     )
 
+    # ------------------------------------------------------- config (visible fields)
+    local config="$HOME/.config/macos-fetch/params.conf"
+    if [[ ! -f $config ]]; then
+        mkdir -p "$(dirname "$config")"
+        local l
+        {
+            for l in "${fields[@]}"; do
+                printf '%s\n' "${l%%|*}"
+            done
+        } > "$config"
+    fi
+
     local -a out=() txt=()
     local dash
     dash=$(dashes $(( ${#USER} + 1 + ${#hn} )))
@@ -248,6 +260,9 @@ main() {
         label=${f%%|*}
         value=${f#*|}
         [[ -z $value ]] && continue
+        if [[ -f $config ]]; then
+            grep -qx "$label" "$config" 2>/dev/null || continue
+        fi
         out+=("${cyc[ci]}${label}${reset}${dim}:${reset} ${value}")
         txt+=("${label}: ${value}")
         (( ci = ci % n_cyc + 1 ))

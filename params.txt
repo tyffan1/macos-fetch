@@ -1,0 +1,19 @@
+OS
+Host
+Kernel
+Uptime
+Shell
+Resolution
+Terminal
+CPU
+GPU
+Memory
+Disk
+Battery
+Network
+Network Speed
+IP
+Packages
+
+Enter the parameters, one per line, in the params.conf file; all parameters are listed above (the order does not matter)
+directory with params.conf - ~/.config/macos-fetch/config
