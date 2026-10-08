@@ -90,6 +90,14 @@ main() {
         "       \"cooc*\"    \"*coo'\""
     )
 
+    # -------------------------------------------------- config (visible fields)
+    local config="$HOME/.config/macos-fetch/params.conf"
+    enabled() { [[ ! -f $2 ]] || grep -qx "$1" "$2" 2>/dev/null; }
+    if [[ ! -f $config ]]; then
+        mkdir -p "$(dirname "$config")"
+        printf '%s\n' OS Host Kernel Uptime Shell Resolution Terminal CPU GPU Memory Disk Battery Network "Network Speed" IP Packages > "$config"
+    fi
+
     # --------------------------------------------------------------- gathering
     local hn hw
     hn=$(scutil --get LocalHostName 2>/dev/null)
@@ -97,124 +105,159 @@ main() {
     [[ -z $hn ]] && hn=$(hostname -s 2>/dev/null)
     [[ -z $hn ]] && hn=mac
 
-    hw=$(system_profiler SPHardwareDataType SPDisplaysDataType 2>/dev/null)
+    local hw=""
+    if enabled "Host" "$config" || enabled "Resolution" "$config" || enabled "GPU" "$config"; then
+        hw=$(system_profiler SPHardwareDataType SPDisplaysDataType 2>/dev/null)
+    fi
 
-    local os="macOS $(sw_vers -productVersion 2>/dev/null)"
-    local build
-    build=$(sw_vers -buildVersion 2>/dev/null)
-    [[ -n $build ]] && os+=" ($build)"
+    local os="" build=""
+    if enabled "OS" "$config"; then
+        os="macOS $(sw_vers -productVersion 2>/dev/null)"
+        build=$(sw_vers -buildVersion 2>/dev/null)
+        [[ -n $build ]] && os+=" ($build)"
+    fi
 
     local model_name model_id host=""
-    model_name=$(print -r -- "$hw" | awk -F': *' '/Model Name:/{print $2; exit}')
-    model_id=$(print -r -- "$hw"   | awk -F': *' '/Model Identifier:/{print $2; exit}')
-    [[ -n $model_name ]] && host="$model_name"
-    [[ -n $model_id   ]] && host="${host:+$host }($model_id)"
-    [[ -z $host       ]] && host=$(scutil --get ComputerName 2>/dev/null)
+    if enabled "Host" "$config"; then
+        model_name=$(printf '%s\n' "$hw" | awk -F': *' '/Model Name:/{print $2; exit}')
+        model_id=$(printf '%s\n' "$hw"   | awk -F': *' '/Model Identifier:/{print $2; exit}')
+        [[ -n $model_name ]] && host="$model_name"
+        [[ -n $model_id   ]] && host="${host:+$host }($model_id)"
+        [[ -z $host       ]] && host=$(scutil --get ComputerName 2>/dev/null)
+    fi
 
     # uptime
-    local boot up_s
-    boot=$(sysctl -n kern.boottime 2>/dev/null)
-    boot=${boot#*sec = }
-    boot=${boot%%,*}
-    local uptime=""
-    if [[ -n $boot && $boot == <-> ]]; then
-        up_s=$(( $(date +%s) - boot ))
-        (( up_s < 0 )) && up_s=0
-        local -i u_d=$(( up_s / 86400 )) u_h=$(( (up_s % 86400) / 3600 )) u_m=$(( (up_s % 3600) / 60 ))
-        local -a up=()
-        (( u_d )) && up+=("$u_d $([[ $u_d == 1 ]] && echo day || echo days)")
-        up+=("$u_h $([[ $u_h == 1 ]] && echo hour || echo hours)")
-        up+=("$u_m $([[ $u_m == 1 ]] && echo min || echo mins)")
-        uptime="${(j:, :)up}"
-        # bash fallback: join array with ", "
-        if [[ -n $BASH_VERSION ]]; then
-            uptime=""
-            local first=1
-            for elem in "${up[@]}"; do
-                [[ $first == 1 ]] && first=0 || uptime+=", "
-                uptime+="$elem"
-            done
+    local boot up_s uptime=""
+    if enabled "Uptime" "$config"; then
+        boot=$(sysctl -n kern.boottime 2>/dev/null)
+        boot=${boot#*sec = }
+        boot=${boot%%,*}
+        if [[ -n $boot && $boot == <-> ]]; then
+            up_s=$(( $(date +%s) - boot ))
+            (( up_s < 0 )) && up_s=0
+            local -i u_d=$(( up_s / 86400 )) u_h=$(( (up_s % 86400) / 3600 )) u_m=$(( (up_s % 3600) / 60 ))
+            local -a up=()
+            (( u_d )) && up+=("$u_d $([[ $u_d == 1 ]] && echo day || echo days)")
+            up+=("$u_h $([[ $u_h == 1 ]] && echo hour || echo hours)")
+            up+=("$u_m $([[ $u_m == 1 ]] && echo min || echo mins)")
+            uptime="${(j:, :)up}"
+            # bash fallback: join array with ", "
+            if [[ -n $BASH_VERSION ]]; then
+                uptime=""
+                local first=1
+                for elem in "${up[@]}"; do
+                    [[ $first == 1 ]] && first=0 || uptime+=", "
+                    uptime+="$elem"
+                done
+            fi
         fi
     fi
 
     # shell / terminal
-    local shell="zsh"
-    [[ -n $ZSH_VERSION ]] && shell+=" $ZSH_VERSION"
-    local term="${TERM_PROGRAM:-${TERM:-unknown}}"
-    [[ -n $TERM_PROGRAM && -n $TERM_PROGRAM_VERSION ]] && term+=" $TERM_PROGRAM_VERSION"
+    local shell="" term=""
+    if enabled "Shell" "$config"; then
+        [[ -n $ZSH_VERSION ]] && shell="zsh $ZSH_VERSION"
+        [[ -n $BASH_VERSION ]] && shell="bash $BASH_VERSION"
+        [[ -z $shell ]] && shell="${0##*/}"
+    fi
+    if enabled "Terminal" "$config"; then
+        term="${TERM_PROGRAM:-${TERM:-unknown}}"
+        [[ -n $TERM_PROGRAM && -n $TERM_PROGRAM_VERSION ]] && term+=" $TERM_PROGRAM_VERSION"
+    fi
 
     # resolution + gpu
-    local res gpu
-    res=$(print -r -- "$hw" | grep 'Resolution:' \
-        | sed -E 's/.*Resolution:[[:space:]]*//; s/^[[:space:]]+//' \
-        | awk '!seen[$0]++' | paste -sd', ' -)
-    gpu=$(print -r -- "$hw" | grep 'Chipset Model:' \
-        | sed -E 's/.*Chipset Model:[[:space:]]*//; s/^[[:space:]]+//' \
-        | awk '!seen[$0]++' | paste -sd', ' -)
+    local res="" gpu=""
+    if enabled "Resolution" "$config"; then
+        res=$(printf '%s\n' "$hw" | grep 'Resolution:' \
+            | sed -E 's/.*Resolution:[[:space:]]*//; s/^[[:space:]]+//' \
+            | awk '!seen[$0]++' | paste -sd', ' -)
+    fi
+    if enabled "GPU" "$config"; then
+        gpu=$(printf '%s\n' "$hw" | grep 'Chipset Model:' \
+            | sed -E 's/.*Chipset Model:[[:space:]]*//; s/^[[:space:]]+//' \
+            | awk '!seen[$0]++' | paste -sd', ' -)
+    fi
 
     # cpu
-    local cpu
-    cpu=$(sysctl -n machdep.cpu.brand_string 2>/dev/null)
-    [[ -z $cpu ]] && cpu=$(uname -m)
-    local -i cores=$(sysctl -n hw.ncpu 2>/dev/null)
-    local -i pcores=$(sysctl -n hw.perflevel0.logicalcpu 2>/dev/null)
-    local -i ecores=$(sysctl -n hw.perflevel1.logicalcpu 2>/dev/null)
-    if (( cores )); then
-        if (( pcores && ecores )); then
-            cpu+=" (${pcores}P + ${ecores}E, ${cores} cores)"
-        else
-            cpu+=" (${cores} cores)"
+    local cpu=""
+    if enabled "CPU" "$config"; then
+        cpu=$(sysctl -n machdep.cpu.brand_string 2>/dev/null)
+        [[ -z $cpu ]] && cpu=$(uname -m)
+        local -i cores=$(sysctl -n hw.ncpu 2>/dev/null)
+        local -i pcores=$(sysctl -n hw.perflevel0.logicalcpu 2>/dev/null)
+        local -i ecores=$(sysctl -n hw.perflevel1.logicalcpu 2>/dev/null)
+        if (( cores )); then
+            if (( pcores && ecores )); then
+                cpu+=" (${pcores}P + ${ecores}E, ${cores} cores)"
+            else
+                cpu+=" (${cores} cores)"
+            fi
         fi
     fi
 
     # memory
-    local -i pagesize=$(pagesize 2>/dev/null)
-    (( pagesize == 0 )) && pagesize=4096
-    local -i mem_total=$(sysctl -n hw.memsize 2>/dev/null)
     local mem=""
-    if (( mem_total )); then
-        local -i used_pages mem_used
-        used_pages=$(vm_stat 2>/dev/null | awk '/Pages free|Pages inactive|Pages speculative/{
-            gsub(/\./, "", $3); s += $3 } END { print s + 0 }')
-        mem_used=$(( mem_total - used_pages * pagesize ))
-        (( mem_used < 0 )) && mem_used=0
-        mem="$(hbytes $mem_used) / $(hbytes $mem_total) ($(( mem_used * 100 / mem_total ))%)"
+    if enabled "Memory" "$config"; then
+        local -i pagesize=$(pagesize 2>/dev/null)
+        (( pagesize == 0 )) && pagesize=4096
+        local -i mem_total=$(sysctl -n hw.memsize 2>/dev/null)
+        if (( mem_total )); then
+            local -i used_pages mem_used
+            used_pages=$(vm_stat 2>/dev/null | awk '/Pages free|Pages inactive|Pages speculative/{
+                gsub(/\./, "", $3); s += $3 } END { print s + 0 }')
+            mem_used=$(( mem_total - used_pages * pagesize ))
+            (( mem_used < 0 )) && mem_used=0
+            mem="$(hbytes $mem_used) / $(hbytes $mem_total) ($(( mem_used * 100 / mem_total ))%)"
+        fi
     fi
 
     # disk
-    local disk_path=/System/Volumes/Data
-    [[ -d $disk_path ]] || disk_path=/
-    local -a df_out
-    local df_raw
-    df_raw=$(df -Pk $disk_path 2>/dev/null | awk 'NR==2 {print $2, $3}')
-    if [[ -n $ZSH_VERSION ]]; then
-        df_out=(${(z)df_raw})
-    else
-        read -ra df_out <<< "$df_raw"
-    fi
     local disk=""
-    if (( ${#df_out} == 2 )); then
-        local -i d_total=$(( ${df_out[1]} * 1024 )) d_used=$(( ${df_out[2]} * 1024 ))
-        (( d_total )) && disk="$(hbytes $d_used) / $(hbytes $d_total) ($(( d_used * 100 / d_total ))%)"
+    if enabled "Disk" "$config"; then
+        local disk_path=/System/Volumes/Data
+        [[ -d $disk_path ]] || disk_path=/
+        local -a df_out
+        local df_raw
+        df_raw=$(df -Pk $disk_path 2>/dev/null | awk 'NR==2 {print $2, $3}')
+        if [[ -n $ZSH_VERSION ]]; then
+            df_out=(${(z)df_raw})
+        else
+            read -ra df_out <<< "$df_raw"
+        fi
+        if (( ${#df_out} == 2 )); then
+            local -i d_total=$(( ${df_out[1]} * 1024 )) d_used=$(( ${df_out[2]} * 1024 ))
+            (( d_total )) && disk="$(hbytes $d_used) / $(hbytes $d_total) ($(( d_used * 100 / d_total ))%)"
+        fi
     fi
 
     #battery
-    local battery=$(pmset -g batt | grep -Eo '[0-9]+%')
+    local battery=""
+    enabled "Battery" "$config" && battery=$(pmset -g batt | grep -Eo '[0-9]+%' | head -1)
 
     #network status
-    local net_status="offline"
-    curl -s --max-time 2 https://www.google.com > /dev/null && net_status="online"
+    local net_status=""
+    if enabled "Network" "$config"; then
+        net_status="offline"
+        curl -s --max-time 2 https://www.google.com > /dev/null && net_status="online"
+    fi
 
     #network speed
-    local raw=$(curl -s -o /dev/null -w "%{size_download} %{time_total} %{speed_download}\n" --max-time 15 http://cachefly.cachefly.net/10mb.test)
-    local bytes=$(echo "$raw" | awk '{print $3}')
-    local net_speed=$(awk  "BEGIN {printf \"%.1f Mbps\", $bytes*8/1000000 }")
+    local net_speed=""
+    if enabled "Network Speed" "$config"; then
+        local raw=$(curl -s -o /dev/null -w "%{size_download} %{time_total} %{speed_download}\n" --max-time 15 http://cachefly.cachefly.net/10mb.test)
+        local bytes=$(echo "$raw" | awk '{print $3}')
+        if [[ -n $bytes && $bytes != 0 ]]; then
+            net_speed=$(awk "BEGIN {printf \"%.1f Mbps\", $bytes*8/1000000 }")
+        fi
+    fi
 
     #ip
-    local ip=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null)
+    local ip=""
+    enabled "IP" "$config" && ip=$(ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null)
 
     #packages
-    local packages=$(brew list --formula 2>/dev/null | wc -l | tr -d '[:space:]')
+    local packages=""
+    enabled "Packages" "$config" && packages=$(brew list --formula 2>/dev/null | wc -l | tr -d '[:space:]')
 
     # ------------------------------------------------------------- info block
     local -a fields=(
@@ -235,18 +278,6 @@ main() {
         "IP|$ip"
         "Packages|$packages"
     )
-
-    # ------------------------------------------------------- config (visible fields)
-    local config="$HOME/.config/macos-fetch/params.conf"
-    if [[ ! -f $config ]]; then
-        mkdir -p "$(dirname "$config")"
-        local l
-        {
-            for l in "${fields[@]}"; do
-                printf '%s\n' "${l%%|*}"
-            done
-        } > "$config"
-    fi
 
     local -a out=() txt=()
     local dash
